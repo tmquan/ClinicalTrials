@@ -18,6 +18,10 @@ from functools import partial
 from lightning_app.utilities.state import AppState
 from lightning.app.components.serve import ServeGradio
 
+import flash
+from flash.text import TextClassificationData, TextEmbedder
+import logging
+logging.basicConfig(level=logging.INFO)
 
 class TextVisualizationServeGradio(ServeGradio):
     inputs = []
@@ -39,7 +43,7 @@ class TextVisualizationServeGradio(ServeGradio):
     df = pd.read_csv(
         "data/NOTEEVENTS.csv",
         #     na_values=[ '', ' ', '?', '?|?','None', '-NaN', '-nan', '', 'N/A', 'NA', 'NULL', 'NaN', 'n/a', 'nan', 'null']
-    )  # .fillna(np.nan)
+    )   #.fillna(np.nan)
     examples = df["TEXT"].to_list()[:10]
 
     def __init__(self, cloud_compute, *args, **kwargs):
@@ -48,8 +52,10 @@ class TextVisualizationServeGradio(ServeGradio):
 
     # Override original implementation to pass the custom css highlightedtext
     def run(self, *args, **kwargs):
-        # if self._model is None:
-        #     self._model = self.build_model()
+        if self._model is None:
+            self._model = self.build_model()
+
+        # Partially call the prediction    
         fn = partial(self.predict, *args, **kwargs)
         fn.__name__ = self.predict.__name__
         gr.Interface(
@@ -66,10 +72,25 @@ class TextVisualizationServeGradio(ServeGradio):
         )
     
     def build_model(self):
-        pass
-    
-    def predict(self, text):
-        return text
+        # We are loading a pre-trained SentenceEmbedder
+        model = TextEmbedder(backbone="sentence-transformers/all-MiniLM-L6-v2")
+        return model 
+
+    def predict(self, texts):
+        # return texts
+        # Wrapping the prediction data inside a datamodule
+        datamodule = TextClassificationData.from_lists(
+            predict_data=texts,
+            batch_size=10,
+        )
+        trainer = flash.Trainer(gpus=0)
+        embeddings = trainer.predict(self._model, datamodule=datamodule)
+        flatten_embeddings = np.array(
+            [item.numpy() for sublist in embeddings for item in sublist]
+        )
+        logging.info(flatten_embeddings.shape)
+        return str(flatten_embeddings)
+
 
 class LitRootFlow(L.LightningFlow):
     def __init__(self):
